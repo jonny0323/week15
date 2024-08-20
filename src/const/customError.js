@@ -4,6 +4,8 @@ class CustomError extends Error {
         this.name = this.constructor.name;
         this.statusCode = statusCode;
         Error.captureStackTrace(this, this.constructor);
+        
     }
   }
+
     module.exports = CustomError; 

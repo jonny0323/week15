@@ -1,6 +1,6 @@
 const CustomError = require("../const/customError");
 
-const checkArticleidx = (req, res, next) => {
+const checkArticleidxa = (req, res, next) => {
     const articleIdx = req.body.articleIdx;
     console.log(articleIdx)
     try {
@@ -15,4 +15,4 @@ const checkArticleidx = (req, res, next) => {
     }
 };
 
-module.exports = checkArticleidx;
+module.exports = checkArticleidxa;

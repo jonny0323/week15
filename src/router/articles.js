@@ -1,270 +1,224 @@
 const router = require("express").Router();
-const { titleRegx, contentRegx } = require("../const/regx");
-const CustomError= require("../const/customError");
+const { titleRegx, contentRegx, articleRegx } = require("../const/regx");
+const CustomError = require("../const/customError");
 const checkLogin = require("../middleware/chekLogin");
+const checkRegx = require("../middleware/checkRegx");
+const client = require("../const/PostgreSQL.js");
 const checkRole = require("../middleware/checkRole");
-const checkTitle = require("../middleware/checkTitle");
-const checkcontent = require("../middleware/checkcontent");
-const checkArticleidx = require("../middleware/checkArticleidx");
-const pool = require("../../mariadb");
-const connect = require("../../mariadb")
+const wrap = require("../const/wrapper.js");
+const multer = require('multer');
+const path = require('path');
+const {upload,s3} = require('../middleware/upload.js');
 
-// --------------------------------게시판 생성하기-----------------------------------------------------------------------------------
+// 게시판 생성하기
+router.post("/", 
+    checkLogin,
+    upload.single('photo'),  // 단일 파일 업로드
+    checkRegx(["title", titleRegx]), 
+    checkRegx(["content", contentRegx]), 
+    wrap(async (req, res, next) => {
+        const userIdx = req.decoded.idx;
+        const { title, content, categoryIdx } = req.body;
+        
+        // 업로드된 파일의 URL
+        const imageUrl = req.file ? req.file.location : null;
 
-router.post("/", checkLogin,checkTitle,checkcontent, (req, res) => {
-    const userIdx = req.session.userId;
-    const title = req.body.title;
-    const content = req.body.content;
-    const categoryIdx = req.body.categoryIdx;
+        console.log(title, content, categoryIdx, imageUrl);
 
-    try {
-        const query = 'INSERT INTO article (account_id , title, content, category_idx) VALUES (?, ?, ?, ?);';
-        const values = [userIdx, title, content, categoryIdx];
+        await client.query(
+            "INSERT INTO project.article (account_idx, title, content, category_idx,image_url) VALUES ($1, $2, $3, $4,$5);",
+            [userIdx, title, content, categoryIdx,imageUrl]
+        );
 
-        connect.query(query, values, (err, results) => {
+        res.status(200).json({ message: 'Article created successfully' });
+    })
+);
 
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-            res.status(200).json(); // JSON 응답 형식 수정
-        });
 
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
 
-// --------------------------------게시판 보기-----------------------------------------------------------------------------------
-
-router.get("/:idx/detail",checkArticleidx, (req, res) => {
+// 게시판 보기
+router.get("/:idx/detail", checkRegx(["idx", articleRegx]), wrap(async (req, res, next) => {
     const articleIdx = req.params.idx;
-    const userIdx = req.session.userId;
-
-    try {
-        const query = 'SELECT * FROM article WHERE idx = ?;';
-        const values = [articleIdx];
-
-        connect.query(query, values, (err, results) => {
-
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-
-            res.status(200).json(
-                results
-            );
-           
-        });
-
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
+    const getArticleResult = await client.query(
+        "SELECT * FROM project.article WHERE idx = $1;",
+        [articleIdx]
+    );
+    
+    if (getArticleResult.rows.length === 0) {
+        return next(new CustomError('Article not found', 404));
     }
-});
 
-// --------------------------------게시판 수정하기-----------------------------------------------------------------------------------
+    res.status(200).json({ article: getArticleResult.rows[0] });
+}));
 
-router.put("/:idx",checkLogin,checkArticleidx,checkTitle,checkcontent, (req, res) => {
-    const title = req.body.title;
-    const content = req.body.content;
-    const articleIdx = req.params.idx;
-    const userIdx = req.session.userId;
-    const categoryIdx = req.body.categoryIdx;
+// 게시판 수정하기
+router.put("/:idx", 
+    checkLogin, 
+    upload.single('photo'),  // 단일 파일 업로드
+    checkRegx(["idx", articleRegx]), 
+    checkRegx(["title", titleRegx]),  
+    checkRegx(["content", contentRegx]), 
+    wrap(async (req, res, next) => {
+        const { title, content, categoryIdx } = req.body;
+        const articleIdx = req.params.idx;
 
-    try {
-        const query = 'UPDATE article SET title = ? , content = ? , category_idx = ? WHERE idx = ?;';
-        const values = [title, content , categoryIdx, articleIdx];
+        const getArticleResult = await client.query(
+            "SELECT account_idx, image_url FROM project.article WHERE idx = $1;",
+            [articleIdx]
+        );
 
-        connect.query(query, values, (err, results) => {
+        if (getArticleResult.rows[0].account_idx !== req.decoded.idx) {
+            return next(new CustomError('권한이 없습니다', 401));
+        }
 
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-            res.status(200).json({
-                message: 'success'
+        // 새 이미지가 업로드되면 기존 이미지 삭제
+        const oldImageUrl = getArticleResult.rows[0].image_url;
+        if (req.file && oldImageUrl) {
+            const imageKey = oldImageUrl.split('.com/')[1];
+
+            s3.deleteObject({ Bucket: "onlyjoke", Key: imageKey }, (err, data) => {
+                if (err) {
+                    console.log("S3 이미지 삭제 중 오류 발생: ", err);
+                } else {
+                    console.log("기존 이미지가 성공적으로 삭제되었습니다: ", data);
+                }
             });
-           
-        });
+        }
 
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
+        // 새로운 이미지 URL 설정
+        const newImageUrl = req.file ? req.file.location : oldImageUrl;
 
-// --------------------------------게시판 삭제하기-----------------------------------------------------------------------------------
+        await client.query(
+            "UPDATE project.article SET title = $1, content = $2, category_idx = $3, image_url = $4 WHERE idx = $5;",
+            [title, content, categoryIdx, newImageUrl, articleIdx]
+        );
 
-router.delete("/:idx/detail",checkLogin,checkArticleidx, (req, res) => {
-    const articleIdx = req.params.idx;
-    const userIdx = req.session.userId;
+        res.status(200).json({ message: 'Article updated successfully' });
+    })
+);
 
-    try {
-        const query = 'DELETE FROM article WHERE idx = ?;';
-        const values = [articleIdx];
 
-        console.log(articleIdx)
-        connect.query(query, values, (err, results) => {
+// 게시판 삭제하기
+router.delete("/:idx/detail", 
+    checkLogin, 
+    checkRegx(["idx", articleRegx]), 
+    wrap(async (req, res, next) => {
+        const articleIdx = req.params.idx;
 
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-            res.status(200).json({
-                message: 'success' 
+        // 게시글의 정보를 가져옵니다.
+        const getArticleResult = await client.query(
+            "SELECT account_idx, image_url FROM project.article WHERE idx = $1;",
+            [articleIdx]
+        );
+
+        // 게시글이 없을 경우 오류 처리
+        if (getArticleResult.rows.length === 0) {
+            return next(new CustomError('Article not found', 404));
+        }
+
+        // 사용자 권한 체크
+        if (getArticleResult.rows[0].account_idx !== req.decoded.idx) {
+            return next(new CustomError('권한이 없습니다', 401));
+        }
+
+        // 이미지 URL이 존재하는 경우 S3에서 삭제
+        const imageUrl = getArticleResult.rows[0].image_url;
+        if (imageUrl) {
+            const imageKey = imageUrl.split('.com/')[1];
+
+            const params = {
+                Bucket: "onlyjoke",  // S3 버킷 이름
+                Key: imageKey
+            };
+
+            s3.deleteObject(params, (err, data) => {
+                if (err) {
+                    console.log("S3 이미지 삭제 중 오류 발생: ", err);
+                } else {
+                    console.log("S3 이미지가 성공적으로 삭제되었습니다: ", data);
+                }
             });
-           
-        });
+        }
 
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
-
-// -------------------------------카테고리 보기-----------------------------------------------------------------------------------
-
-router.get("/list", (req, res) => {
+        // 게시글 삭제
+        await client.query(
+            "DELETE FROM project.article WHERE idx = $1;",
+            [articleIdx]
+        );
+        
+        res.status(200).json({ message: 'Article deleted successfully' });
+    })
+);
+// 카테고리 보기
+router.get("/list", wrap(async (req, res, next) =>  {
     const categoryIdx = req.query.categoryIdx;
-    const userIdx = req.session.userId;
+    const getCategoryResult = await client.query(
+        "SELECT * FROM project.article WHERE category_idx = $1;",
+        [categoryIdx]
+    );
+    res.status(200).json({ getCategoryRows: getCategoryResult.rows });
+}));
 
-    try {
-        const query = 'SELECT * FROM article WHERE category_idx = ?;';
-        const values = [categoryIdx];
+// 게시글 좋아요 누르기
+router.post("/:idx/like", 
+    checkLogin, 
+    checkRegx(["idx", articleRegx]), 
+    wrap(async (req, res, next) => {
+        const articleIdx = req.params.idx;
+        const userIdx = req.decoded.idx;
 
-        connect.query(query, values, (err, results) => {
+        await client.query('BEGIN;');
 
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
+        const selectResult = await client.query(
+            'SELECT * FROM project.article_like WHERE article_idx = $1 AND account_idx = $2',
+            [articleIdx, userIdx]
+        );
 
-            res.status(200).json(
-                results
-            );
-           
-        });
+        if (selectResult.rows.length >= 1) {
+            await client.query('ROLLBACK');
+            return next(new CustomError('이미 좋아요를 눌렀습니다', 409));
+        }
 
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
+        await client.query(
+            'INSERT INTO project.article_like (article_idx, account_idx) VALUES ($1, $2);',
+            [articleIdx, userIdx]
+        );
 
-// -------------------------------게시글 좋아요 누르기-----------------------------------------------------------------------------------
+        await client.query('COMMIT;');
 
-router.post("/:idx/like", checkLogin ,checkArticleidx, (req, res) => {
-    const articleIdx = req.params.idx;
-    const userIdx = req.session.userId;
+        res.status(200).json({});
+    })
+);
 
-    try {
-        const query = 'SELECT * FROM article_like WHERE article_idx = ? AND account_id = ? ;';
-        const values = [articleIdx,userIdx];
+// 게시글 좋아요 취소하기
+router.delete("/:idx/like", 
+    checkLogin, 
+    checkRegx(["idx", articleRegx]), 
+    wrap(async (req, res, next) => {
+        const articleIdx = req.params.idx;
+        const userIdx = req.decoded.idx;
 
-        console.log(articleIdx)
-        console.log(userIdx)
-        connect.query(query, values, (err, results) => {
-            
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-            if (results.length !== 0) {
-                res.status(404).send({ message: '이미 좋아요를 눌렀습니다' });
-                return;
-            }
+        await client.query('BEGIN;');
 
-            const query2 = 'INSERT INTO article_like (article_idx, account_id) VALUES (?, ?);';
-            const values2 = [articleIdx,userIdx];
+        const selectResult = await client.query(
+            'SELECT * FROM project.article_like WHERE article_idx = $1 AND account_idx = $2',
+            [articleIdx, userIdx]
+        );
 
-            connect.query(query2, values2, (err, results) => {
+        if (selectResult.rows.length < 1) {
+            await client.query('ROLLBACK');
+            return next(new CustomError('이미 좋아요가 취소되었습니다', 409));
+        }
 
-                if (err) {
-                    console.log(err.message)
-                    res.status(500).send({ message: 'Database query failed' });
-                    return;
-                }
+        await client.query(
+            'DELETE FROM project.article_like WHERE article_idx = $1 AND account_idx = $2;',
+            [articleIdx, userIdx]
+        );
 
-                
-                res.status(200).json({ message: '좋아요가 성공적으로 추가되었습니다.' }); // JSON 응답 형식 수정
-            });
-            
-            
-        });
+        await client.query('COMMIT;');
 
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
-
-// -------------------------------게시글 좋아요 취소하기-----------------------------------------------------------------------------------
-
-router.delete("/:idx/like",checkLogin, checkArticleidx,(req, res) => {
-    const articleIdx = req.params.idx;
-    const userIdx = req.session.userId;
-
-    try {
-        const query = 'SELECT * FROM article_like WHERE article_idx = ? AND account_id = ?;';
-        const values = [articleIdx,userIdx];
-
-        connect.query(query, values, (err, results) => {
-
-            if (err) {
-                console.log(err.message)
-                res.status(500).send({ message: 'Database query failed' });
-                return;
-            }
-
-            if (results.length === 0) {
-                res.status(404).send({ message: '이미 좋아요가 취소되어져있습니다' });
-                return;
-            }
-
-            const query = 'DELETE FROM article_like WHERE article_idx = ? AND account_id = ?;';
-            const values = [articleIdx,userIdx];
-
-            connect.query(query, values, (err, results) => {
-
-                if (err) {
-                    console.log(err.message)
-                    res.status(500).send({ message: 'Database query failed' });
-                    return;
-                }
-
-                res.status(200).json({ message: '좋아요가 성공적으로 취소되었습니다.' }); // JSON 응답 형식 수정
-            });
-             // JSON 응답 형식 수정
-        });
-
-    } catch (err) {
-        res.status(err.statusCode || 500).send({
-            "message": err.message
-        });
-    }
-});
+        res.status(200).json({});
+    })
+);
 
 module.exports = router;
-
-
-// 명세서 짜본거 모두다 api 로 변환 그리고 1주차때 해온거 모두다 명세서로 옮기자 api에서 값 받아오는 거 까지 다 선언해주라
-// reqest respose 까지 채워서 오기
-// postman 이라는 프로그램이 있다 사용방법알아오고 api 테스트까지 해오기
-// jsp 에서 세션 했었으니 express session 이 있다 npm 으로 설치함.
-// 그거까지 쓸수 있다면 써오기 시간남으면
-// jsp 에서 마리아디비 연결할때 명령어 패키지로 하기 maridb 패키지 일듯 npm install mariadb 

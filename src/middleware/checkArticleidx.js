@@ -1,8 +1,8 @@
 const CustomError = require("../const/customError");
 
-const checkArticleidx = (req, res, next) => {
+const checkArticleidxp = (req, res, next) => {
     const articleIdx = req.params.idx;
-    console.log(articleIdx)
+    console.log('articleIdx:', articleIdx);
     try {
         if (!articleIdx) {
             throw new CustomError("게시글을 찾을 수 없습니다", 400);
@@ -15,4 +15,4 @@ const checkArticleidx = (req, res, next) => {
     }
 };
 
-module.exports = checkArticleidx;
+module.exports = checkArticleidxp;

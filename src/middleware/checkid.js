@@ -1,14 +1,16 @@
 const CustomError = require("../const/customError");
+const { titleRegx, contentRegx, pwRegx, idRegx, tellRegx, nameRegx } = require("../const/regx");
 
-const checkid = (req, res, next) => {
-    console.log(res.locals.id)
-    const id = res.locals.id;  // 수정된 부분
-    const idRegx = /^.{1,10}$/
 
-    
+
+
+
+
+const checkid = (param) => {
+
     try {
-        if (!id.match(idRegx)) {    
-            throw new CustomError("id 값이 이상함", 400);
+        if (!param.match(idRegx)) {
+            throw new CustomError(param + "값이 이상함", 400);
         }
         next(); // 다음 미들웨어로 이동해주세요
     } catch (err) {
@@ -16,7 +18,22 @@ const checkid = (req, res, next) => {
             "message": err.message
         });
     }
-};
+
+
+
+    return (req, res, next) => {
+        console.log(res.locals.id)
+        const id = res.locals.id;  // 수정된 부분
+        const idRegx = /^.{1,10}$/
+    
+        
+        
+    };
+
+
+}
+
+
 
 module.exports = checkid;
 

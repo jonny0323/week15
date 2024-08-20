@@ -1,4 +1,19 @@
-const mariadb = require("mysql");
+
+const {Client} = require("pg");
+const Query = require('pg').Query
+
+var client = new Client({
+    user : 'stageus',
+    host : 'localhost',
+    database : 'postgres',
+    password : '1234',
+    port : 3306
+})
+
+
+
+
+const mysql= require("mysql2/promise");
 // const pool = mariadb.createPool({
 //     host: "localhost",
 //     port : 3306,
@@ -8,14 +23,30 @@ const mariadb = require("mysql");
 //     connectionLimit: 10,
 //  });
 
-const conn = mariadb.createConnection({
-    host: "localhost",
-    port : 3306,
-    user: "stageus",
-    password: "1234",
-    database: "web",
- });
- 
- conn.connect()
+const tmp = async () => {
+    const mariadb = await mysql.createConnection({
+        host: "localhost",
+        user: "stageus",
+        password: "1234",
+        database: "web"
+    });
 
- module.exports = conn
+    return mariadb
+}
+
+    
+
+    // const mariadb =  mysql.createConnection({
+    //     host: "localhost",
+    //     user: "stageus",
+    //     password: "1234",
+    //     database: "web"
+    // });
+    
+    // module.exports = mariadb
+
+
+
+
+module.exports = tmp
+
