@@ -98,7 +98,7 @@ router.put("/:idx",
 );
 
 
-// 게시판 삭제하기
+// 게시글 삭제하기
 router.delete("/:idx/detail", 
     checkLogin, 
     checkRegx(["idx", articleRegx]), 
@@ -118,7 +118,7 @@ router.delete("/:idx/detail",
 
         // 사용자 권한 체크
         if (getArticleResult.rows[0].account_idx !== req.decoded.idx) {
-            return next(new CustomError('권한이 없습니다', 401));
+            return next(new CustomError('권한이 없습니다', 403));
         }
 
         // 이미지 URL이 존재하는 경우 S3에서 삭제
